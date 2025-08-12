@@ -7,7 +7,7 @@ export default {
     try {
       const body = await request.json();
 
-      // Если пришёл один embed, превращаем в массив embeds
+      // Если embed передан как embed или embeds
       let payload;
       if (body.embed) {
         payload = { embeds: [body.embed] };
@@ -17,15 +17,14 @@ export default {
         return new Response('No embed provided', { status: 400 });
       }
 
-      // Отправляем на Discord
-      const res = await fetch(env.DISCORD_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      // Кодируем JSON в строку и добавляем в конец URL
+      const encoded = encodeURIComponent(JSON.stringify(payload));
+      const targetUrl = `${env.DISCORD_WEBHOOK_URL}${encoded}`;
+
+      const res = await fetch(targetUrl, { method: 'GET' });
 
       if (!res.ok) {
-        return new Response(`Discord error: ${await res.text()}`, { status: res.status });
+        return new Response(`Error: ${await res.text()}`, { status: res.status });
       }
 
       return new Response('OK', { status: 200 });
