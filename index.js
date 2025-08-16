@@ -118,16 +118,7 @@ export default {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
       }
 
-      if (field.name === "👥 Players:") {
-        const match = field.value.match(/^(\d+)\/(\d+)$/);
-        if (!match) {
-          return new Response("Invalid Players format", { status: 400 });
-        }
-        const current = parseInt(match[1], 10);
-        if (current <= 4) {
-          return new Response("Too few players", { status: 400 });
-        }
-      }
+      // ❌ УБРАНА проверка на количество игроков
 
       for (const badWord of blacklist) {
         if (
