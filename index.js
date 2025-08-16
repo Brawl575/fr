@@ -1,6 +1,12 @@
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+
     if (request.method !== 'POST') {
+      if (request.method === 'GET' && url.searchParams.has('msg')) {
+        // Старый GET ?msg= — оставляем без защиты (можно добавить при желании)
+        return new Response('GET not supported except for ?msg=', { status: 405 });
+      }
       return new Response('Use POST method', { status: 405 });
     }
 
@@ -16,14 +22,49 @@ export default {
       return new Response("Invalid JSON", { status: 400 });
     }
 
+    // 🔑 Запрос на токен
+    if (body.action === 'get_token' && body.key === env.STATIC_TOKEN_KEY) {
+      const token = crypto.randomUUID();
+      const timestamp = Date.now();
+
+      // Сохраняем токен в KV
+      await env.TOKEN_KV.put(token, timestamp.toString());
+
+      return new Response(JSON.stringify({ token }), {
+        headers: { 'Content-Type': 'application/json' },
+        status: 200
+      });
+    }
+
     // Проверка embeds
     if (!body.embeds || !Array.isArray(body.embeds) || body.embeds.length !== 1) {
       return new Response("Invalid embeds array", { status: 400 });
     }
 
+    // Проверка токена
+    const token = body.token;
+    if (!token) {
+      return new Response("Missing token", { status: 401 });
+    }
+
+    const storedTimestamp = await env.TOKEN_KV.get(token);
+    if (!storedTimestamp) {
+      return new Response("Invalid or expired token", { status: 401 });
+    }
+
+    const timestamp = parseInt(storedTimestamp, 10);
+    const age = Date.now() - timestamp;
+    if (age > 10000) { // 10 секунд
+      await env.TOKEN_KV.delete(token);
+      return new Response("Token expired", { status: 401 });
+    }
+
+    // Одноразовый токен — удаляем после проверки
+    await env.TOKEN_KV.delete(token);
+
     const embed = body.embeds[0];
 
-    // Разрешённые ключи в embed
+    // Разрешённые ключи
     const allowedEmbedKeys = ["title", "color", "fields", "footer"];
     for (const key of Object.keys(embed)) {
       if (!allowedEmbedKeys.includes(key)) {
@@ -36,24 +77,23 @@ export default {
       return new Response("Invalid title", { status: 400 });
     }
 
-    // Цвет должен быть числом
+    // Цвет = число
     if (typeof embed.color !== "number") {
       return new Response("Invalid color", { status: 400 });
     }
 
-    // Проверка footer (только если есть)
+    // Footer (если есть)
     if (embed.footer) {
       if (typeof embed.footer.text !== "string") {
         return new Response("Invalid footer", { status: 400 });
       }
     }
 
-    // Проверка fields
+    // Проверка полей
     if (!Array.isArray(embed.fields) || embed.fields.length < 5) {
       return new Response("Invalid fields array", { status: 400 });
     }
 
-    // Список допустимых названий полей
     const allowedFieldNames = [
       "🪙 Name:",
       "📈 Generation:",
@@ -64,7 +104,6 @@ export default {
       "📲 Join:"
     ];
 
-    // Чёрный список слов
     const blacklist = ["dragon", "cannelloni"];
 
     for (const field of embed.fields) {
@@ -75,15 +114,10 @@ export default {
         return new Response(`Invalid field: ${field.name}`, { status: 400 });
       }
 
-      // inline допустим только true/false или отсутствует
-      if (
-        field.inline !== undefined &&
-        typeof field.inline !== "boolean"
-      ) {
+      if (field.inline !== undefined && typeof field.inline !== "boolean") {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
       }
 
-      // 🔎 Проверка игроков
       if (field.name === "👥 Players:") {
         const match = field.value.match(/^(\d+)\/(\d+)$/);
         if (!match) {
@@ -95,7 +129,6 @@ export default {
         }
       }
 
-      // 🔎 Проверка на чёрный список в name и value
       for (const badWord of blacklist) {
         if (
           field.name.toLowerCase().includes(badWord) ||
@@ -106,11 +139,11 @@ export default {
       }
     }
 
-    // Если всё ок, отправляем в Discord
+    // Отправка в Discord
     const res = await fetch(env.DISCORD_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ embeds: body.embeds })
     });
 
     if (!res.ok) {
