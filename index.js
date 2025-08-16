@@ -90,15 +90,17 @@ export default {
           return new Response("Invalid Players format", { status: 400 });
         }
         const current = parseInt(match[1], 10);
-
         if (current <= 4) {
           return new Response("Too few players", { status: 400 });
         }
       }
 
-      // 🔎 Проверка на чёрный список слов
+      // 🔎 Проверка на чёрный список в name и value
       for (const badWord of blacklist) {
-        if (field.value.toLowerCase().includes(badWord)) {
+        if (
+          field.name.toLowerCase().includes(badWord) ||
+          field.value.toLowerCase().includes(badWord)
+        ) {
           return new Response(`Blacklisted word detected: ${badWord}`, { status: 400 });
         }
       }
