@@ -53,7 +53,7 @@ export default {
       return new Response("Invalid fields array", { status: 400 });
     }
 
-    // Список допустимых названий полей (в твоём коде)
+    // Список допустимых названий полей
     const allowedFieldNames = [
       "🪙 Name:",
       "📈 Generation:",
@@ -71,12 +71,27 @@ export default {
       ) {
         return new Response(`Invalid field: ${field.name}`, { status: 400 });
       }
+
       // inline допустим только true/false или отсутствует
       if (
         field.inline !== undefined &&
         typeof field.inline !== "boolean"
       ) {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
+      }
+
+      // 🔎 Дополнительная проверка для поля Players
+      if (field.name === "👥 Players:") {
+        const match = field.value.match(/^(\d+)\/(\d+)$/);
+        if (!match) {
+          return new Response("Invalid Players format", { status: 400 });
+        }
+        const current = parseInt(match[1], 10);
+
+        // ❗ Если игроков 4 или меньше — блокируем
+        if (current <= 4) {
+          return new Response("Too few players", { status: 400 });
+        }
       }
     }
 
