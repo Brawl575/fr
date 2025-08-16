@@ -1,3 +1,5 @@
+import { Firestore, ServiceAccountCredential } from 'firebase-firestore-lite';
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -22,13 +24,22 @@ export default {
       return new Response("Invalid JSON", { status: 400 });
     }
 
+    const db = new Firestore({
+      projectId: env.FIREBASE_PROJECT_ID,
+      credential: new ServiceAccountCredential({
+        private_key: env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        client_email: env.FIREBASE_CLIENT_EMAIL,
+        project_id: env.FIREBASE_PROJECT_ID,
+      }),
+    });
+
     // 🔑 Запрос на токен
     if (body.action === 'get_token' && body.key === env.STATIC_TOKEN_KEY) {
       const token = crypto.randomUUID();
       const timestamp = Date.now();
 
-      // Сохраняем токен в KV
-      await env.TOKEN_KV.put(token, timestamp.toString());
+      // Сохраняем токен в Firestore
+      await db.collection('tokens').doc(token).set({ timestamp });
 
       return new Response(JSON.stringify({ token }), {
         headers: { 'Content-Type': 'application/json' },
@@ -47,20 +58,22 @@ export default {
       return new Response("Missing token", { status: 401 });
     }
 
-    const storedTimestamp = await env.TOKEN_KV.get(token);
-    if (!storedTimestamp) {
+    const docRef = db.collection('tokens').doc(token);
+    const doc = await docRef.get();
+    if (!doc.exists) {
       return new Response("Invalid or expired token", { status: 401 });
     }
 
-    const timestamp = parseInt(storedTimestamp, 10);
+    const data = doc.data();
+    const timestamp = data.timestamp;
     const age = Date.now() - timestamp;
     if (age > 10000) { // 10 секунд
-      await env.TOKEN_KV.delete(token);
+      await docRef.delete();
       return new Response("Token expired", { status: 401 });
     }
 
     // Одноразовый токен — удаляем после проверки
-    await env.TOKEN_KV.delete(token);
+    await docRef.delete();
 
     const embed = body.embeds[0];
 
