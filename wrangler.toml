@@ -2,7 +2,3 @@ name = "fr"  # Имя вашего Worker'а
 main = "index.js"            # Указываем основной файл Worker'а
 compatibility_date = "2025-08-16"  # Совместимость с датой (обновите на текущую или оставьте так)
 
-# Привязка KV Namespace
-[[kv_namespaces]]
-binding = "TOKEN_KV"            # Имя переменной, используемой в коде Worker'а
-id = "2cb3d4eb3328433c8b5a38caebda4e7a"  # Замените на реальный ID вашего KV Namespace
