@@ -4,6 +4,7 @@ export default {
 
     if (request.method !== 'POST') {
       if (request.method === 'GET' && url.searchParams.has('msg')) {
+        // Старый GET ?msg= — оставляем без защиты (можно добавить при желании)
         return new Response('GET not supported except for ?msg=', { status: 405 });
       }
       return new Response('Use POST method', { status: 405 });
@@ -21,85 +22,10 @@ export default {
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    // 🔑 Запрос на токен
-    if (body.action === 'get_token' && body.key === env.STATIC_TOKEN_KEY) {
-      const token = crypto.randomUUID();
-      const timestamp = Date.now();
-
-      // Сохраняем токен в Firestore через REST API
-      const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/tokens/${token}`;
-      const accessToken = await getFirebaseAccessToken(env); // Получаем токен доступа
-      const setResponse = await fetch(firestoreUrl, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          fields: {
-            timestamp: { integerValue: timestamp }
-          }
-        }),
-      });
-
-      if (!setResponse.ok) {
-        return new Response(`Firestore error: ${await setResponse.text()}`, { status: 500 });
-      }
-
-      return new Response(JSON.stringify({ token }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200
-      });
-    }
-
     // Проверка embeds
     if (!body.embeds || !Array.isArray(body.embeds) || body.embeds.length !== 1) {
       return new Response("Invalid embeds array", { status: 400 });
     }
-
-    // Проверка токена
-    const token = body.token;
-    if (!token) {
-      return new Response("Missing token", { status: 401 });
-    }
-
-    const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/tokens/${token}`;
-    const accessToken = await getFirebaseAccessToken(env);
-    const getResponse = await fetch(firestoreUrl, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    });
-
-    if (!getResponse.ok) {
-      return new Response("Invalid or expired token", { status: 401 });
-    }
-
-    const doc = await getResponse.json();
-    if (!doc.fields || !doc.fields.timestamp) {
-      return new Response("Invalid or expired token", { status: 401 });
-    }
-
-    const timestamp = parseInt(doc.fields.timestamp.integerValue, 10);
-    const age = Date.now() - timestamp;
-    if (age > 10000) { // 10 секунд
-      // Удаляем токен
-      await fetch(firestoreUrl, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
-      return new Response("Token expired", { status: 401 });
-    }
-
-    // Одноразовый токен — удаляем после проверки
-    await fetch(firestoreUrl, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    });
 
     const embed = body.embeds[0];
 
@@ -157,6 +83,8 @@ export default {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
       }
 
+      // ❌ УБРАНА проверка на количество игроков
+
       for (const badWord of blacklist) {
         if (
           field.name.toLowerCase().includes(badWord) ||
@@ -181,69 +109,3 @@ export default {
     return new Response("OK", { status: 200 });
   }
 };
-
-// Функция для получения токена доступа Firebase
-async function getFirebaseAccessToken(env) {
-  const authUrl = 'https://oauth2.googleapis.com/token';
-  const privateKey = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
-  const jwtHeader = {
-    alg: 'RS256',
-    typ: 'JWT'
-  };
-  const jwtPayload = {
-    iss: env.FIREBASE_CLIENT_EMAIL,
-    scope: 'https://www.googleapis.com/auth/datastore',
-    aud: authUrl,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    iat: Math.floor(Date.now() / 1000)
-  };
-
-  // Кодируем заголовок и тело в base64
-  const encodeBase64 = (obj) => btoa(JSON.stringify(obj)).replace(/=+$/, '');
-  const header = encodeBase64(jwtHeader);
-  const payload = encodeBase64(jwtPayload);
-
-  // Подписываем JWT (используем Web Crypto API)
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToArrayBuffer(privateKey),
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(`${header}.${payload}`)
-  );
-  const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/=+$/, '');
-
-  const jwt = `${header}.${payload}.${signatureBase64}`;
-
-  // Запрашиваем токен доступа
-  const response = await fetch(authUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to get access token: ${await response.text()}`);
-  }
-
-  const data = await response.json();
-  return data.access_token;
-}
-
-// Конвертируем PEM ключ в ArrayBuffer
-function pemToArrayBuffer(pem) {
-  const b64 = pem
-    .replace(/-----(BEGIN|END) PRIVATE KEY-----/g, '')
-    .replace(/\n/g, '');
-  const binary = atob(b64);
-  const buffer = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    buffer[i] = binary.charCodeAt(i);
-  }
-  return buffer.buffer;
-}
