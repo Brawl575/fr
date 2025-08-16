@@ -64,6 +64,9 @@ export default {
       "📲 Join:"
     ];
 
+    // Чёрный список слов
+    const blacklist = ["dragon", "cannelloni"];
+
     for (const field of embed.fields) {
       if (
         !allowedFieldNames.includes(field.name) ||
@@ -80,7 +83,7 @@ export default {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
       }
 
-      // 🔎 Дополнительная проверка для поля Players
+      // 🔎 Проверка игроков
       if (field.name === "👥 Players:") {
         const match = field.value.match(/^(\d+)\/(\d+)$/);
         if (!match) {
@@ -88,9 +91,15 @@ export default {
         }
         const current = parseInt(match[1], 10);
 
-        // ❗ Если игроков 4 или меньше — блокируем
         if (current <= 4) {
           return new Response("Too few players", { status: 400 });
+        }
+      }
+
+      // 🔎 Проверка на чёрный список слов
+      for (const badWord of blacklist) {
+        if (field.value.toLowerCase().includes(badWord)) {
+          return new Response(`Blacklisted word detected: ${badWord}`, { status: 400 });
         }
       }
     }
