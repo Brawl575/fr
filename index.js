@@ -1,16 +1,10 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 export default {
   async fetch(request, env) {
-    const supabase = createClient(
-      env.SUPABASE_URL,
-      env.SUPABASE_SERVICE_ROLE_KEY
-    );
-
     const url = new URL(request.url);
 
     if (request.method !== 'POST') {
       if (request.method === 'GET' && url.searchParams.has('msg')) {
+        // Старый GET ?msg= — оставляем без защиты (можно добавить при желании)
         return new Response('GET not supported except for ?msg=', { status: 405 });
       }
       return new Response('Use POST method', { status: 405 });
@@ -28,57 +22,41 @@ export default {
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    // Генерация токена
-    if (body.action === 'get_token' && body.key === env.STATIC_TOKEN_KEY) {
-      const token = crypto.randomUUID();
-      const timestamp = new Date().toISOString();
-
-      const { error } = await supabase
-        .from('tokens')
-        .insert([{ token, timestamp }]);
-
-      if (error) {
-        return new Response('Failed to generate token', { status: 500 });
-      }
-
-      return new Response(JSON.stringify({ token }), {
-        headers: { 'Content-Type': 'application/json' },
-        status: 200
-      });
-    }
-
     // Проверка embeds
-    if (!body.embeds || !Array.isArray(body.embeds) || body.embeds.length < 1) {
+    if (!body.embeds || !Array.isArray(body.embeds) || body.embeds.length !== 1) {
       return new Response("Invalid embeds array", { status: 400 });
     }
-
-    const token = body.token;
-    if (!token) {
-      return new Response("Missing token", { status: 401 });
-    }
-
-    const { data, error } = await supabase
-      .from('tokens')
-      .select('timestamp')
-      .eq('token', token)
-      .single();
-
-    if (error || !data) {
-      return new Response("Invalid or expired token", { status: 401 });
-    }
-
-    const storedTimestamp = new Date(data.timestamp).getTime();
-    const age = Date.now() - storedTimestamp;
-    if (age > 10000) { // 10 секунд
-      await supabase.from('tokens').delete().eq('token', token);
-      return new Response("Token expired", { status: 401 });
-    }
-
-    await supabase.from('tokens').delete().eq('token', token);
 
     const embed = body.embeds[0];
-    if (!embed.title || !embed.description || !embed.fields || embed.fields.length < 5) {
-      return new Response("Invalid embeds array", { status: 400 });
+
+    // Разрешённые ключи
+    const allowedEmbedKeys = ["title", "color", "fields", "footer"];
+    for (const key of Object.keys(embed)) {
+      if (!allowedEmbedKeys.includes(key)) {
+        return new Response(`Invalid embed key: ${key}`, { status: 400 });
+      }
+    }
+
+    // Проверка заголовка
+    if (embed.title !== "Nameless Pet Notifier") {
+      return new Response("Invalid title", { status: 400 });
+    }
+
+    // Цвет = число
+    if (typeof embed.color !== "number") {
+      return new Response("Invalid color", { status: 400 });
+    }
+
+    // Footer (если есть)
+    if (embed.footer) {
+      if (typeof embed.footer.text !== "string") {
+        return new Response("Invalid footer", { status: 400 });
+      }
+    }
+
+    // Проверка полей
+    if (!Array.isArray(embed.fields) || embed.fields.length < 5) {
+      return new Response("Invalid fields array", { status: 400 });
     }
 
     const allowedFieldNames = [
@@ -94,13 +72,18 @@ export default {
     const blacklist = ["dragon", "cannelloni"];
 
     for (const field of embed.fields) {
-      if (!allowedFieldNames.includes(field.name) || typeof field.value !== "string") {
+      if (
+        !allowedFieldNames.includes(field.name) ||
+        typeof field.value !== "string"
+      ) {
         return new Response(`Invalid field: ${field.name}`, { status: 400 });
       }
 
       if (field.inline !== undefined && typeof field.inline !== "boolean") {
         return new Response(`Invalid inline value in: ${field.name}`, { status: 400 });
       }
+
+      // ❌ УБРАНА проверка на количество игроков
 
       for (const badWord of blacklist) {
         if (
@@ -112,6 +95,7 @@ export default {
       }
     }
 
+    // Отправка в Discord
     const res = await fetch(env.DISCORD_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
